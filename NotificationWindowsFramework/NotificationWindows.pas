@@ -3,8 +3,21 @@ unit NotificationWindows;
 interface
 
 uses
-  Windows, Messages, SysUtils, Contnrs, Variants, Classes, Graphics, Controls, Forms,
-  Dialogs, Generics.Collections, Math, AnyiQuack, AQPControlAnimations;
+  Winapi.Windows,
+  Winapi.Messages,
+  System.SysUtils,
+  System.Contnrs,
+  System.Variants,
+  System.Classes,
+  System.Math,
+  Vcl.Graphics,
+  Vcl.Controls,
+  Vcl.Forms,
+  Vcl.Dialogs,
+  Generics.Collections,
+
+  AnyiQuack,
+  AQPControlAnimations;
 
 type
   TNotificationStack = class;
@@ -27,6 +40,8 @@ type
   protected
     function AutoClosePossible: Boolean; virtual;
   public
+    constructor Create(AOwner: TComponent); override;
+
     procedure Close; reintroduce;
 
     property Stack: TNotificationStack read FStack;
@@ -57,16 +72,17 @@ type
     FOutPositionAnimationDuration: Integer;
     FOutAlphaAnimationDuration: Integer;
 
-    procedure Close(NotificationWindow: TNotificationWindow);
     procedure UpdatePositions;
 
-    property List: TNotificationList read FList;
   public
     constructor Create;
     destructor Destroy; override;
 
     procedure Add(NotificationWindow: TNotificationWindow);
+    procedure Close(NotificationWindow: TNotificationWindow);
     procedure CloseAll(Animate: Boolean = True);
+
+    property List: TNotificationList read FList;
 
     property InPositionAnimationDuration: Integer read FInPositionAnimationDuration
       write FInPositionAnimationDuration;
@@ -83,6 +99,16 @@ implementation
 {$R *.dfm}
 
 {** TNotificationWindow **}
+
+constructor TNotificationWindow.Create(AOwner: TComponent);
+begin
+  inherited Create(AOwner);
+
+  // Win 10 bugfix: TWinControl descendants are sometimes not rendered, but
+  // the switch AlphaBlend off and on again solve the issue.
+  AlphaBlend := False;
+  AlphaBlend := True;
+end;
 
 function TNotificationWindow.AutoClosePossible: Boolean;
 begin
@@ -226,6 +252,9 @@ var
   NextFocusedWindowIndex: Integer;
   AniPlugin: TAQPControlAnimations;
 begin
+  if not List.Contains(NotificationWindow) then
+    Exit;
+
   AniPlugin := Take(NotificationWindow)
     .CancelAnimations
     .Plugin<TAQPControlAnimations>;

@@ -23,8 +23,18 @@ unit AnyiQuack;
 interface
 
 uses
-  SysUtils, Types, Classes, Controls, ExtCtrls, Contnrs, Windows, Messages, Math, Graphics, Forms,
-  Character, SyncObjs, Diagnostics, Generics.Collections;
+  Winapi.Windows,
+  Winapi.Messages,
+  System.SysUtils,
+  System.Types,
+  System.Classes,
+  System.Contnrs,
+  System.Character,
+  System.Math,
+  System.Diagnostics,
+  System.SyncObjs,
+  System.UITypes,
+  Generics.Collections;
 
 {$INCLUDE Compile.inc}
 
@@ -48,6 +58,7 @@ type
     emInOut, emInOutMirrored, emInOutCombined,
     emOutIn, emOutInMirrored, emOutInCombined);
   TActorRole = (arTimer, arInterval, arDelay, arAnimation);
+  TActorRoles = set of TActorRole;
 
   TObjectArray = TArray<TObject>;
   TEaseArray = array of TEaseType;
@@ -247,6 +258,8 @@ type
     class function Take(Objects: TObjectList): TAQ; overload;
     class function Take<T: class>(Objects: TObjectList<T>): TAQ; overload;
 
+    class function HasActiveActors(CheckActors: TActorRoles; AObject: TObject; ID: Integer = 0): Boolean;
+
     class function GetUniqueID: Integer;
 
     class function Ease(EaseType: TEaseType;
@@ -299,40 +312,6 @@ type
       ID: Integer = 0): TAQ;
     function EachDelay(Delay: Integer; Each: TEachFunction; ID: Integer = 0): TAQ;
     function EachRepeat(Times: Integer; EachFunction: TEachFunction): TAQ;
-    {**
-     * !Ist erstmal nur ein Entwurf!
-     *
-     * Verarbeitet die Objekte in mehreren Threads
-     *
-     * Der Einsatz dieser Methode soll gut überlegt und vorallem gründlich getestet werden. Sie
-     * lohnt sich nur bei rechenintensiven Verarbeitungsschritten.
-     * Die Each-Methoden sollten nicht die an sie übergebene TAQ-Instanz manipulieren
-     * (Add, Remove etc.): Dies würde zu zufälligen Zugriffsverletzungen führen.
-     *
-     * @param MainEach Wird im Kontext des Threads für jedes Objekt ausgeführt
-     * @param ConcurrentThreads Optional. Standard ist 1. Anzahl von gleichzeitigen Threads.
-     *        Die Werte 0 und 1 haben eine spezielle Bedeutung:
-     *        = 0 Für jedes Objekt wird sofort ein Thread erstellt
-     *        = 1 Es werden maximal soviele Threads erstellt, wieviele die CPU ausführen kann,
-     *            jedoch mindestens 2 (bei einem i7-920 wären es z.B. 8)
-     *        > 1 Es werden maximal soviele Threads erstellt
-     * @param Synchronize Sagt aus, ob die Methode die Beendigung aller Threads abwarten soll.
-     *        - Bei True läuft die Verarbeitung der Objekte zwar über mehrere Threads ab,
-     *          jedoch wird der Haupt-Thread (Anwendung) blockiert, bis die Verarbeitung
-     *          abgeschlossen wurde. Dies ermöglicht den Einsatz von nahezu allen Objekten, auch
-     *          wenn Teile davon nicht Thread-Safe sind.
-     *        - Bei False wird die Anwendung nicht blockiert und die Threads werden parallel
-     *          gestartet. Setzt Kenntniss über die Funktionsweise der zu verarbeiteten Objekte
-     *          voraus.
-     * @param TerminateEach Optional. Standard ist nil. Wird im Kontext des Haupt-Threads
-     *        ausgeführt, wenn ein Thread die Verarbeitung beendet hat.
-     * @param FinalizeEach Optional. Standard ist nil. Wird ebenfalls im Kontext des
-     *        Haupt-Threads für jedes gehaltene Objekt ausgeführt, wenn die Verarbeitung aller
-     *        Objekte beendet ist, also wenn alle Threads fertig sind.
-     *}
-//		function EachThread(MainEach: TEachFunction; ConcurrentThreads: Byte = 1;
-//			Synchronize: Boolean = False;
-//			TerminateEach: TEachFunction = nil; FinalizeEach: TEachFunction = nil): TAQ;
 
     function NewChain: TAQ;
     function EndChain: TAQ;
@@ -475,10 +454,12 @@ type
 
   function MatchID(CompareID, CurrentID: Integer): Boolean;
 
+const
+  MaxLifeTime = 10000;
+
 implementation
 
 const
-  MaxLifeTime = 10000;
 {$IFDEF UseThreadTimer}
   IntervalResolution = 15;
 {$ELSE}
@@ -593,7 +574,7 @@ begin
   end
   else
   begin
-    Progress := Progress - (2.625/2.75);
+    Progress := Progress - (2.625 / 2.75);
     Result := (Base * Progress) * Progress + 0.984375;
   end;
 end;
@@ -657,16 +638,13 @@ begin
     Result[cc] := Objects[cc];
 end;
 
-{**
- * Sagt aus, ob CompareID die CurrentID greift
- *
- * Folgende Regeln werden angewendet:
- * - ist CompareID = 0,  so wird CurrentID nicht verglichen
- *                       und es wird True geliefert
- * - ist CompareID > 0,  so muss CurrentID gleich sein
- * - ist CompareID = -1, so muss CurrentID = 0 sein
- * - ist CompareID = -2, so muss CurrentID > 0 sein
- *}
+// ID comparer
+//
+// Following rules will be applied
+// - when CompareID =  0, CurrentID will not be compared and the result is always True
+// - when CompareID >  0, CurrentID must be equal
+// - when CompareID = -1, CurrentID must be 0
+// - when CompareID = -2, CurrentID must be greater than 0
 function MatchID(CompareID, CurrentID: Integer): Boolean;
 begin
   Result := (CompareID = 0) or
@@ -688,14 +666,14 @@ begin
   Result := (Container and BitMask) <> 0;
 end;
 
-{** TAQBase **}
+{ TAQBase }
 
 constructor TAQBase.Create;
 begin
   inherited Create(False);
 end;
 
-{** TAQ **}
+{ TAQ }
 
 // Appends all in the TObjectArray contained objects to the current TAQ instance
 function TAQ.Append(Objects: TObjectArray): TAQ;
@@ -716,9 +694,7 @@ var
 begin
   if SupervisorLock(Result, aqmAppend) then
     Exit;
-  {**
-   * Overflows vermeiden
-   *}
+  // Avoid overflows
   if Objects = Self then
     Exit;
   for cc := 0 to Objects.Count - 1 do
@@ -752,11 +728,10 @@ end;
 
 procedure TAQ.AddInterval(Interval: TInterval);
 begin
-  {**
-   * Das Intervall wird nicht angenommen, wenn keine Objekte vorhanden sind
-   *
-   * Eine Ausnahme besteht für den Garbage-Collector
-   *}
+  // The interval will not be taken and will be freed, when the current TAQ instance
+  // do not contains any objects.
+  //
+  // One exception is for the garbage collector.
   if (Count = 0) and (Self <> FGC) then
   begin
     Interval.Free;
@@ -851,37 +826,29 @@ end;
 function TAQ.ChildrenFiller(AQ: TAQ; O: TObject): Boolean;
 var
   cc: Integer;
+  OC: TComponent absolute O;
 begin
   Result := True;
-  if not (O is TComponent) then
-    Exit;
-  with TComponent(O) do
-    for cc := 0 to ComponentCount - 1 do
-      AQ.Add(Components[cc]);
+  if O is TComponent then
+    for cc := 0 to OC.ComponentCount - 1 do
+      AQ.Add(OC.Components[cc]);
 end;
 
 procedure TAQ.Clean;
 begin
   if not Finalized then
   begin
-    {**
-     * Globale Auswirkungen
-     *}
+    // Global effects
     GarbageCollector.Each(
       function(GC: TAQ; O: TObject): Boolean
       begin
-        {**
-         * Sollte ein Plugin für diese Instanz existieren, so muss es freigegeben werden
-         *}
+        // When any plugin is connected with this instance, so it must be freed
         if (O is TAQPlugin) and (TAQPlugin(O).WorkAQ = Self) then
           GC.Remove(O)
-        {**
-         * Sollte diese Instanz mit einer anderen zuvor verkettet worden sein, so muss diese
-         * Verbindung aufgehoben werden
-         *}
+        // If this instance is chained with an other, so it must be "unchained"
         else if (O is TAQ) and (TAQ(O).FChainedTo = Self) then
           TAQ(O).FChainedTo := nil;
-        Result := True; // Kompletter Scan
+        Result := True; // Full scan
       end);
   end;
 
@@ -910,9 +877,7 @@ end;
 class procedure TAQ.ComponentsNotification(AComponent: TComponent; Operation: TOperation);
 begin
   if (Operation = opRemove) and not Finalized then
-    {**
-     * Die Verbindung zu einer Komponente in allen lebenden TAQ-Instanzen aufheben
-     *}
+    // The removed component must be removed from all living TAQ instances
     GarbageCollector.Each(
       function(GC: TAQ; O: TObject): Boolean
       begin
@@ -1212,7 +1177,7 @@ end;
 function TAQ.EachDelay(Delay: Integer; Each: TEachFunction; ID: Integer): TAQ;
 begin
   if Delay >= MaxLifeTime then
-    raise EAQ.CreateFmt('Delay (%d) must bew lower than MaxLifeTime (%d)',
+    raise EAQ.CreateFmt('Delay (%d) must be lower than MaxLifeTime (%d)',
       [Delay, MaxLifeTime])
   else if SupervisorLock(Result, aqmEachDelay) then
      Exit;
@@ -1553,43 +1518,19 @@ end;
 class function TAQ.EaseColor(StartColor, EndColor: TColor; Progress: Real;
   EaseFunction: TEaseFunction): TColor;
 var
-  StartR, StartG, StartB,
-  EndR, EndG, EndB: Byte;
-
-  function R(Color: TColor): Byte;
-  begin
-    Result := Color and $FF;
-  end;
-
-  function G(Color: TColor): Byte;
-  begin
-    Result := (Color and $FF00) shr 8;
-  end;
-
-  function B(Color: TColor): Byte;
-  begin
-    Result := (Color and $FF0000) shr 16;
-  end;
+  StartCR, EndCR: TColorRec;
 begin
   if StartColor = EndColor then
     Exit(StartColor);
 
-  StartColor := ColorToRGB(StartColor);
-  StartR := R(StartColor);
-  StartG := G(StartColor);
-  StartB := B(StartColor);
-
-  EndColor := ColorToRGB(EndColor);
-  EndR := R(EndColor);
-  EndG := G(EndColor);
-  EndB := B(EndColor);
-
+  StartCR.Color := TColorRec.ColorToRGB(StartColor);
+  EndCR.Color := TColorRec.ColorToRGB(EndColor);
   Progress := EaseFunction(Progress);
 
   Result := RGB(
-    Min(255, Max(0, EaseInteger(StartR, EndR, Progress, nil))),
-    Min(255, Max(0, EaseInteger(StartG, EndG, Progress, nil))),
-    Min(255, Max(0, EaseInteger(StartB, EndB, Progress, nil))));
+    Min(255, Max(0, EaseInteger(StartCR.R, EndCR.R, Progress, nil))),
+    Min(255, Max(0, EaseInteger(StartCR.G, EndCR.G, Progress, nil))),
+    Min(255, Max(0, EaseInteger(StartCR.B, EndCR.B, Progress, nil))));
 end;
 
 class function TAQ.EaseInteger(StartValue, EndValue: Integer; Progress: Real;
@@ -2549,6 +2490,31 @@ begin
     Result.Add(Objects[cc]);
 end;
 
+// Determines, whether there are active actors (running animation, delay...) for AObject in general
+// or optional for the actor with the specified ID
+class function TAQ.HasActiveActors(CheckActors: TActorRoles; AObject: TObject; ID: Integer): Boolean;
+var
+  Found: Boolean;
+begin
+  Found := False;
+  FActiveIntervalAQs.Each(
+    function(AQ: TAQ; O: TObject): Boolean
+    var
+      OAQ: TAQ absolute O;
+      CheckActor: TActorRole;
+    begin
+      for CheckActor in CheckActors do
+      begin
+        Found := OAQ.Contains(AObject) and OAQ.HasActors(CheckActor, ID);
+        if Found then
+          Break;
+      end;
+
+      Result := not Found;
+    end);
+  Result := Found;
+end;
+
 function TAQ.TimerActorsChain(ID: Integer; IncludeOrphans: Boolean): TAQ;
 begin
   if SupervisorLock(Result, aqmTimerActorsChain) then
@@ -2793,10 +2759,10 @@ begin
       try
         FTimerProc;
       except
-        Application.HandleException(Self);
+        System.Classes.ApplicationHandleException(Self);
       end
-      else
-        Result := DefWindowProc(FWindowHandle, Msg, wParam, lParam);
+    else
+      Result := DefWindowProc(FWindowHandle, Msg, wParam, lParam);
 end;
 
 procedure TTimerThread.Execute;
